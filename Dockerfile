@@ -69,6 +69,6 @@ COPY --chown=app:app config.toml* /app/
 # Switch to non-root user
 USER app
 
-EXPOSE 8000
+EXPOSE 3000
 
-CMD ["fastapi", "run", "--host", "0.0.0.0", "src/main.py"]
+CMD ["fastapi", "run", "--host", "0.0.0.0", "--port", "3000", "src/main.py"]

@@ -1,12 +1,10 @@
 .worktrees/
 api/**/*.db
 api/data
-api/docker-compose.yml
 
 *.db
 data
 redis-data
-/docker-compose.yml
 /compose.yml
 
 
