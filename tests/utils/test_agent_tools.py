@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -19,6 +19,7 @@ from src.utils.agent_tools import (
     PEER_CARD_ALLOWED_PREFIXES,
     ObservationsCreatedResult,
     ToolContext,
+    _bounded_int,  # pyright: ignore[reportPrivateUsage]
     _handle_create_observations,  # pyright: ignore[reportPrivateUsage]
     _handle_delete_observations,  # pyright: ignore[reportPrivateUsage]
     _handle_extract_preferences,  # pyright: ignore[reportPrivateUsage]
@@ -80,7 +81,7 @@ async def tool_test_data(
     await db_session.flush()
 
     # Create messages in the session
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     messages: list[models.Message] = []
     for i in range(5):
         peer_name = peer2.name if i % 2 == 0 else peer1.name
@@ -379,7 +380,7 @@ class TestCreateObservations:
             session_name=session.name,
             workspace_name=workspace.name,
             message_ids=[],
-            message_created_at=str(datetime.now(timezone.utc)),
+            message_created_at=str(datetime.now(UTC)),
         )
 
         assert isinstance(result, ObservationsCreatedResult)
@@ -442,7 +443,7 @@ class TestCreateObservations:
             session_name=session.name,
             workspace_name=workspace.name,
             message_ids=[],
-            message_created_at=str(datetime.now(timezone.utc)),
+            message_created_at=str(datetime.now(UTC)),
         )
 
         assert isinstance(result, ObservationsCreatedResult)
@@ -501,7 +502,7 @@ class TestCreateObservations:
             session_name=session.name,
             workspace_name=workspace.name,
             message_ids=[],
-            message_created_at=str(datetime.now(timezone.utc)),
+            message_created_at=str(datetime.now(UTC)),
         )
 
         assert isinstance(result, ObservationsCreatedResult)
@@ -556,7 +557,7 @@ class TestCreateObservations:
             session_name=session.name,
             workspace_name=workspace.name,
             message_ids=[],
-            message_created_at=str(datetime.now(timezone.utc)),
+            message_created_at=str(datetime.now(UTC)),
         )
 
         assert isinstance(result, ObservationsCreatedResult)
@@ -592,7 +593,7 @@ class TestCreateObservations:
             session_name=session.name,
             workspace_name=workspace.name,
             message_ids=[],
-            message_created_at=str(datetime.now(timezone.utc)),
+            message_created_at=str(datetime.now(UTC)),
         )
 
         assert isinstance(result, ObservationsCreatedResult)
@@ -651,7 +652,7 @@ class TestCreateObservations:
             session_name=session.name,
             workspace_name=workspace.name,
             message_ids=[],
-            message_created_at=str(datetime.now(timezone.utc)),
+            message_created_at=str(datetime.now(UTC)),
         )
 
         assert isinstance(result, ObservationsCreatedResult)
@@ -930,7 +931,7 @@ class TestSearchMemory:
                 content="Relevant fallback message",
                 seq_in_session=1,
                 token_count=5,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
             return [([msg], [msg])]
 
@@ -952,6 +953,21 @@ class TestSearchMemory:
         assert query_embeddings[0] == fallback_embeddings[0]
 
 
+class TestBoundedInt:
+    """Unit tests for tool-input clamping."""
+
+    def test_floors_nonpositive_to_one(self) -> None:
+        assert _bounded_int(0, 10, hi=20) == 1
+        assert _bounded_int(-5, 10, hi=20) == 1
+
+    def test_caps_at_hi(self) -> None:
+        assert _bounded_int(100, 10, hi=20) == 20
+
+    def test_falls_back_on_bad_input(self) -> None:
+        assert _bounded_int("Infinity", 10, hi=20) == 10
+        assert _bounded_int(None, 10, hi=20) == 10
+
+
 @pytest.mark.asyncio
 class TestSearchMessages:
     """Tests for _handle_search_messages."""
@@ -970,6 +986,39 @@ class TestSearchMessages:
         from src.utils.types import ToolResult
 
         assert isinstance(result, str | ToolResult)
+
+    async def test_limit_zero_is_floored_to_one(
+        self,
+        make_tool_context: Callable[..., ToolContext],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """LLM-supplied limit=0 must not reach the vector store as top_k=0."""
+        ctx = make_tool_context()
+        seen_limits: list[int] = []
+
+        async def fake_embed(query: str) -> list[float]:
+            _ = query
+            return [0.1, 0.2, 0.3]
+
+        async def fake_search_messages(
+            workspace_name: str,
+            session_name: str | None,
+            query: str,
+            limit: int = 10,
+            **_kwargs: Any,
+        ) -> list[Any]:
+            _ = (workspace_name, session_name, query)
+            seen_limits.append(limit)
+            return []
+
+        monkeypatch.setattr("src.utils.agent_tools.embedding_client.embed", fake_embed)
+        monkeypatch.setattr(
+            "src.utils.agent_tools.crud.search_messages", fake_search_messages
+        )
+
+        await _handle_search_messages(ctx, {"query": "anything", "limit": 0})
+
+        assert seen_limits == [1]
 
 
 @pytest.mark.asyncio
@@ -1048,7 +1097,7 @@ class TestSearchMessagesTemporal:
                 content="Relevant temporal fallback message",
                 seq_in_session=1,
                 token_count=5,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
             return [([msg], [msg])]
 
@@ -1083,7 +1132,7 @@ class TestGetMessagesByDateRange:
         ctx = make_tool_context()
 
         # Get messages from today
-        today = datetime.now(timezone.utc).date().isoformat()
+        today = datetime.now(UTC).date().isoformat()
         result = await _handle_get_messages_by_date_range(
             ctx, {"after_date": today, "limit": 10}
         )
@@ -1584,7 +1633,7 @@ class TestExtractPreferences:
             content="I prefer brief responses and always include code examples",
             seq_in_session=100,
             token_count=20,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         db_session.add(preference_msg)
         await db_session.flush()
@@ -1633,7 +1682,7 @@ class TestExtractPreferences:
                 content=f"Relevant from {query}",
                 seq_in_session=1,
                 token_count=5,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
             return [([msg], [])]
 
